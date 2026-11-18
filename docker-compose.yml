@@ -1,0 +1,34 @@
+# SecureGate in gateway mode in front of any web app.
+#
+#   docker compose up --build
+#
+#   http://localhost:8080/            -> your app, through SecureGate
+#   http://localhost:8080/dashboard   -> SecureGate console (token: SECUREGATE_ADMIN_TOKEN in .env)
+#
+# All SecureGate settings (admin token, upstream URL, limits) live in .env.
+#
+# Only the gateway publishes a port. The app is reachable solely on the internal
+# Docker network, so there is no way around the gateway.
+
+services:
+  securegate:
+    build: .
+    image: securegate
+    ports:
+      - "8080:8080"
+    env_file:
+      - path: .env
+        required: true
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - app
+    restart: unless-stopped
+
+  # Replace this with your own app. Any language works. Do NOT add a "ports:" section.
+  # traefik/whoami just echoes the request it receives, handy to see what SecureGate forwards.
+  app:
+    image: traefik/whoami:v1.10.3
+    # build: ../my-app                 # e.g. build your own app instead
+    # expose: ["8081"]                 # then set SECUREGATE_PROXY_TARGETURL=http://app:8081
+    restart: unless-stopped

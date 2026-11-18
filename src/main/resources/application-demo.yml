@@ -1,0 +1,39 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: securegate
+  jackson:
+    serialization:
+      indent-output: true
+
+securegate:
+  enabled: true
+  # Max request body size in bytes (default 10 KB)
+  max-body-size: 10240
+  # Only trust X-Forwarded-For when running behind a reverse proxy you control
+  trust-forwarded-for: false
+  # Paths that skip SecureGate entirely (admin auth still applies), e.g. health checks:
+  excluded-paths: []
+  #  - /actuator/health/**
+  # Paths where some detectors are switched off (size limit, rate limit and blocking still apply):
+  detection:
+    exclusions: []
+    #  - paths: [/api/editor/**]
+    #    types: [XSS]                 # omit types to skip SQLI, XSS and PATH_TRAVERSAL
+  # Admin endpoints (/admin/**) require header "X-Admin-Token: <token>"
+  admin:
+    token: ${SECUREGATE_ADMIN_TOKEN:change-me}
+  rate-limit:
+    max-requests: 100
+    window-seconds: 60
+  blocking:
+    max-violations: 5
+    violation-window-seconds: 600
+    # 0 = blocked until manually unblocked
+    block-duration-seconds: 3600
+    whitelist: []
+  alerts:
+    log-file: logs/alerts.json
+    max-payload-length: 500
