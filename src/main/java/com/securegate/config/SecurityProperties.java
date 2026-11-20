@@ -1,6 +1,7 @@
 package com.securegate.config;
 
 import com.securegate.model.AttackType;
+import com.securegate.model.EnforcementMode;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.ArrayList;
@@ -27,12 +28,47 @@ public class SecurityProperties {
      */
     private List<String> excludedPaths = new ArrayList<>();
 
+    /** ENFORCE blocks attacks. MONITOR only logs them ("action":"DETECTED"). Switchable at runtime. */
+    private EnforcementMode mode = EnforcementMode.ENFORCE;
+
+    private final Headers headers = new Headers();
     private final Detection detection = new Detection();
     private final Proxy proxy = new Proxy();
     private final Admin admin = new Admin();
     private final RateLimit rateLimit = new RateLimit();
     private final Blocking blocking = new Blocking();
     private final Alerts alerts = new Alerts();
+
+    /**
+     * Security headers added to every response. A header the protected app sets itself
+     * always wins. SecureGate's own pages (/dashboard, /admin) always get a strict CSP.
+     */
+    public static class Headers {
+        private boolean enabled = true;
+        private String frameOptions = "DENY";
+        private String referrerPolicy = "no-referrer";
+        private String permissionsPolicy = "camera=(), microphone=(), geolocation=()";
+        private String crossOriginOpenerPolicy = "same-origin";
+        /** Sent only on HTTPS requests (directly, or via X-Forwarded-Proto when trust-forwarded-for is on). */
+        private long hstsMaxAgeSeconds = 31_536_000;
+        /** CSP for the protected app's responses. Empty = none, because a wrong CSP breaks pages. */
+        private String contentSecurityPolicy = "";
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public String getFrameOptions() { return frameOptions; }
+        public void setFrameOptions(String frameOptions) { this.frameOptions = frameOptions; }
+        public String getReferrerPolicy() { return referrerPolicy; }
+        public void setReferrerPolicy(String referrerPolicy) { this.referrerPolicy = referrerPolicy; }
+        public String getPermissionsPolicy() { return permissionsPolicy; }
+        public void setPermissionsPolicy(String permissionsPolicy) { this.permissionsPolicy = permissionsPolicy; }
+        public String getCrossOriginOpenerPolicy() { return crossOriginOpenerPolicy; }
+        public void setCrossOriginOpenerPolicy(String v) { this.crossOriginOpenerPolicy = v; }
+        public long getHstsMaxAgeSeconds() { return hstsMaxAgeSeconds; }
+        public void setHstsMaxAgeSeconds(long hstsMaxAgeSeconds) { this.hstsMaxAgeSeconds = hstsMaxAgeSeconds; }
+        public String getContentSecurityPolicy() { return contentSecurityPolicy; }
+        public void setContentSecurityPolicy(String v) { this.contentSecurityPolicy = v; }
+    }
 
     public static class Detection {
         /** Paths where some or all attack detectors are skipped. */
@@ -140,6 +176,9 @@ public class SecurityProperties {
     public void setMaxBodySize(long maxBodySize) { this.maxBodySize = maxBodySize; }
     public boolean isTrustForwardedFor() { return trustForwardedFor; }
     public void setTrustForwardedFor(boolean trustForwardedFor) { this.trustForwardedFor = trustForwardedFor; }
+    public EnforcementMode getMode() { return mode; }
+    public void setMode(EnforcementMode mode) { this.mode = mode; }
+    public Headers getHeaders() { return headers; }
     public List<String> getExcludedPaths() { return excludedPaths; }
     public void setExcludedPaths(List<String> excludedPaths) { this.excludedPaths = excludedPaths; }
     public Detection getDetection() { return detection; }

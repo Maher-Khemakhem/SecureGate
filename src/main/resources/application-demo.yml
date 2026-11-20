@@ -12,6 +12,8 @@ securegate:
   enabled: true
   # Max request body size in bytes (default 10 KB)
   max-body-size: 10240
+  # ENFORCE blocks attacks. MONITOR only logs them ("action":"DETECTED"); switchable from the dashboard.
+  mode: ENFORCE
   # Only trust X-Forwarded-For when running behind a reverse proxy you control
   trust-forwarded-for: false
   # Paths that skip SecureGate entirely (admin auth still applies), e.g. health checks:
@@ -21,7 +23,8 @@ securegate:
   detection:
     exclusions: []
     #  - paths: [/api/editor/**]
-    #    types: [XSS]                 # omit types to skip SQLI, XSS and PATH_TRAVERSAL
+    #    types: [XSS]                 # omit types to skip all detectors; others: SQLI, PATH_TRAVERSAL,
+    #                                 # COMMAND_INJECTION, SSRF, LOG4SHELL, NOSQLI
   # Admin endpoints (/admin/**) require header "X-Admin-Token: <token>"
   admin:
     token: ${SECUREGATE_ADMIN_TOKEN:change-me}

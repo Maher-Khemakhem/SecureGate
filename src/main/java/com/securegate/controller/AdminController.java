@@ -6,6 +6,8 @@ import com.securegate.model.AlertEntry;
 import com.securegate.model.BlockedIp;
 import com.securegate.service.AlertLoggerService;
 import com.securegate.service.IpBlockingService;
+import com.securegate.service.ModeService;
+import com.securegate.model.EnforcementMode;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -39,12 +42,39 @@ public class AdminController {
     private final IpBlockingService blockingService;
     private final AlertLoggerService alertLogger;
     private final SecurityProperties properties;
+    private final ModeService modeService;
 
     public AdminController(IpBlockingService blockingService, AlertLoggerService alertLogger,
-                           SecurityProperties properties) {
+                           SecurityProperties properties, ModeService modeService) {
         this.blockingService = blockingService;
         this.alertLogger = alertLogger;
         this.properties = properties;
+        this.modeService = modeService;
+    }
+
+    /** Current enforcement mode (ENFORCE blocks attacks, MONITOR only logs them). */
+    @GetMapping("/mode")
+    public Map<String, Object> mode() {
+        return Map.of("enforcement", modeService.get());
+    }
+
+    /**
+     * Switches the enforcement mode at runtime: {@code {"mode":"MONITOR"}} or {@code {"mode":"ENFORCE"}}.
+     * The change lasts until restart; set {@code securegate.mode} to make it permanent.
+     */
+    @PutMapping("/mode")
+    public ResponseEntity<Map<String, Object>> setMode(@RequestBody Map<String, String> request) {
+        String value = request.getOrDefault("mode", "").trim().toUpperCase(java.util.Locale.ROOT);
+        EnforcementMode newMode;
+        try {
+            newMode = EnforcementMode.valueOf(value);
+        } catch (IllegalArgumentException e) {
+            Map<String, Object> error = new LinkedHashMap<>();
+            error.put("error", "mode must be ENFORCE or MONITOR");
+            return ResponseEntity.badRequest().body(error);
+        }
+        modeService.set(newMode);
+        return ResponseEntity.ok(Map.of("enforcement", modeService.get()));
     }
 
     /** Active limits plus the caller's IP as SecureGate sees it (used by the dashboard). */
@@ -63,6 +93,7 @@ public class AdminController {
         String ip = SecurityResponses.clientIp(request, properties);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("mode", properties.getProxy().isEnabled() ? "gateway" : "embedded");
+        body.put("enforcement", modeService.get());
         body.put("upstream", properties.getProxy().isEnabled() ? properties.getProxy().getTargetUrl() : null);
         body.put("your_ip", ip);
         body.put("your_violations", blockingService.violationCount(ip));
@@ -74,7 +105,8 @@ public class AdminController {
         exclusions.put("bypass_paths", properties.getExcludedPaths());
         exclusions.put("detection", properties.getDetection().getExclusions().stream()
                 .map(e -> Map.of("paths", e.getPaths(),
-                        "skips", e.getTypes().isEmpty() ? List.of("SQLI", "XSS", "PATH_TRAVERSAL") : e.getTypes()))
+                        "skips", e.getTypes().isEmpty()
+                                ? com.securegate.filter.PathExclusions.DETECTABLE : e.getTypes()))
                 .toList());
         body.put("exclusions", exclusions);
         return body;

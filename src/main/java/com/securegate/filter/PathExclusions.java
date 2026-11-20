@@ -25,7 +25,8 @@ public class PathExclusions {
 
     /** Detectors that can be excluded. The body-size limit is always enforced. */
     public static final Set<AttackType> DETECTABLE =
-            Collections.unmodifiableSet(EnumSet.of(AttackType.SQLI, AttackType.XSS, AttackType.PATH_TRAVERSAL));
+            Collections.unmodifiableSet(EnumSet.of(AttackType.SQLI, AttackType.XSS, AttackType.PATH_TRAVERSAL,
+                    AttackType.COMMAND_INJECTION, AttackType.SSRF, AttackType.LOG4SHELL, AttackType.NOSQLI));
 
     private record Rule(String pattern, Set<AttackType> types) {
     }

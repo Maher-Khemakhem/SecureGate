@@ -15,31 +15,31 @@ public class XssDetector extends RegexAttackDetector {
                     + "|animationstart|animationend|transitionend|pointerover|pointerdown|pointerenter|begin|end"
                     + "|wheel|copy|paste|cut|drag|dragstart|drop|beforeunload|unload|hashchange|message|show|abort";
 
-    private static final List<String> PATTERNS = List.of(
+    private static final List<Rule> RULES = List.of(
             // <script ...> and </script>
-            "<\\s*/?\\s*script\\b",
+            rule("<\\s*/?\\s*script\\b", "script"),
             // Dangerous URL schemes (allow whitespace/control chars inside, as browsers do)
-            "j\\s*a\\s*v\\s*a\\s*s\\s*c\\s*r\\s*i\\s*p\\s*t\\s*:",
-            "\\bvbscript\\s*:",
-            "\\bdata\\s*:\\s*text/html",
+            rule("j\\s*a\\s*v\\s*a\\s*s\\s*c\\s*r\\s*i\\s*p\\s*t\\s*:", ":"),
+            rule("\\bvbscript\\s*:", "vbscript"),
+            rule("\\bdata\\s*:\\s*text/html", "data"),
             // Inline event handlers: onerror=, onload = ...
-            "\\bon(?:" + EVENT_HANDLERS + ")\\s*=",
+            rule("\\bon(?:" + EVENT_HANDLERS + ")\\s*=", "="),
             // Any on*= attribute inside something that looks like a tag
-            "<[a-z!/][^>]*\\son[a-z]+\\s*=",
+            rule("<[a-z!/][^>]*\\son[a-z]+\\s*=", "<"),
             // Elements commonly used to load or run active content
-            "<\\s*(?:iframe|frame|frameset|object|embed|applet|meta|base|link|svg|math|isindex)\\b",
-            "<\\s*img\\b[^>]*\\bsrc\\s*=",
+            rule("<\\s*(?:iframe|frame|frameset|object|embed|applet|meta|base|link|svg|math|isindex)\\b", "<"),
+            rule("<\\s*img\\b[^>]*\\bsrc\\s*=", "<"),
             // DOM sinks / script gadgets
-            "\\bdocument\\s*\\.\\s*(?:cookie|domain|write|location)\\b",
-            "\\bwindow\\s*\\.\\s*location\\b",
-            "\\beval\\s*\\(",
-            "\\balert\\s*[(`]",
-            "\\bsrcdoc\\s*=",
-            "\\bstyle\\s*=[^>]*expression\\s*\\("
+            rule("\\bdocument\\s*\\.\\s*(?:cookie|domain|write|location)\\b", "document"),
+            rule("\\bwindow\\s*\\.\\s*location\\b", "window"),
+            rule("\\beval\\s*\\(", "eval"),
+            rule("\\balert\\s*[(`]", "alert"),
+            rule("\\bsrcdoc\\s*=", "srcdoc"),
+            rule("\\bstyle\\s*=[^>]*expression\\s*\\(", "expression")
     );
 
     public XssDetector() {
-        super(PATTERNS);
+        super(RULES);
     }
 
     @Override

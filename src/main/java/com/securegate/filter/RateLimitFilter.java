@@ -4,6 +4,7 @@ import com.securegate.config.SecurityProperties;
 import com.securegate.model.AttackType;
 import com.securegate.service.AlertLoggerService;
 import com.securegate.service.IpBlockingService;
+import com.securegate.service.ModeService;
 import com.securegate.service.RateLimiterService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -25,15 +26,17 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final AlertLoggerService alertLogger;
 
     private final PathExclusions exclusions;
+    private final ModeService modeService;
 
     public RateLimitFilter(SecurityProperties properties, RateLimiterService rateLimiter,
                            IpBlockingService blockingService, AlertLoggerService alertLogger,
-                           PathExclusions exclusions) {
+                           PathExclusions exclusions, ModeService modeService) {
         this.properties = properties;
         this.rateLimiter = rateLimiter;
         this.blockingService = blockingService;
         this.alertLogger = alertLogger;
         this.exclusions = exclusions;
+        this.modeService = modeService;
     }
 
     @Override
@@ -56,6 +59,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
             return;
         }
         String endpoint = SecurityResponses.endpoint(request);
+        if (modeService.isMonitor()) {
+            // Monitor mode: record that the limit would have been hit, but let the request through.
+            alertLogger.log(ip, AttackType.RATE_LIMIT.label(), endpoint,
+                    request.getMethod() + " " + endpoint, "DETECTED");
+            chain.doFilter(request, response);
+            return;
+        }
         alertLogger.log(ip, AttackType.RATE_LIMIT.label(), endpoint,
                 request.getMethod() + " " + endpoint, "BLOCKED");
         if (blockingService.recordViolation(ip, AttackType.RATE_LIMIT.label())) {

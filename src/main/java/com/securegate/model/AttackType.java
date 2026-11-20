@@ -7,6 +7,10 @@ public enum AttackType {
     SQLI("SQLi", "SQLi detected"),
     XSS("XSS", "XSS detected"),
     PATH_TRAVERSAL("PATH_TRAVERSAL", "Path traversal detected"),
+    COMMAND_INJECTION("COMMAND_INJECTION", "Command injection detected"),
+    SSRF("SSRF", "SSRF detected"),
+    LOG4SHELL("LOG4SHELL", "Log4Shell (JNDI) injection detected"),
+    NOSQLI("NOSQLI", "NoSQL injection detected"),
     OVERSIZED_PAYLOAD("OVERSIZED_PAYLOAD", "Payload too large"),
     RATE_LIMIT("RATE_LIMIT", "Rate limit exceeded"),
     BLOCKED_IP("BLOCKED_IP", "IP address is blocked");

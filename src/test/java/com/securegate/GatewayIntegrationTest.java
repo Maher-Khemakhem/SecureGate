@@ -150,6 +150,18 @@ class GatewayIntegrationTest {
     }
 
     @Test
+    void securityHeadersAreAddedAndTheUpstreamsOwnHeaderWins() throws Exception {
+        mvc.perform(get("/plain").with(ip("10.2.0.10")))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().stringValues("X-Frame-Options", "DENY"));
+        // The upstream sets its own X-Frame-Options: it replaces ours instead of being duplicated.
+        mvc.perform(get("/framed").with(ip("10.2.0.10")))
+                .andExpect(status().isOk())
+                .andExpect(header().stringValues("X-Frame-Options", "SAMEORIGIN"));
+    }
+
+    @Test
     void upstreamStatusAndRedirectsPassThrough() throws Exception {
         mvc.perform(get("/missing").with(ip("10.2.0.9")))
                 .andExpect(status().isNotFound());
@@ -177,6 +189,11 @@ class GatewayIntegrationTest {
         String path = exchange.getRequestURI().getRawPath();
         if (path.equals("/missing")) {
             send(exchange, 404, "not found");
+            return;
+        }
+        if (path.equals("/framed")) {
+            exchange.getResponseHeaders().add("X-Frame-Options", "SAMEORIGIN");
+            send(exchange, 200, "framed");
             return;
         }
         if (path.equals("/redirect")) {

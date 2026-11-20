@@ -68,8 +68,7 @@ public final class SecurityResponses {
             return false;
         }
         String path = RequestPaths.canonical(request);
-        return path.equals("/dashboard") || path.equals("/dashboard/") || path.equals("/dashboard/index.html")
-                || path.equals("/favicon.ico");
+        return path.equals("/dashboard") || path.startsWith("/dashboard/") || path.equals("/favicon.ico");
     }
 
     public static String endpoint(HttpServletRequest request) {

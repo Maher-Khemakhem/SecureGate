@@ -4,9 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.securegate.config.SecurityProperties;
 import com.securegate.filter.detector.AttackDetector;
+import com.securegate.filter.detector.InputNormalizer;
 import com.securegate.model.AttackType;
 import com.securegate.service.AlertLoggerService;
 import com.securegate.service.IpBlockingService;
+import com.securegate.service.ModeService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
@@ -15,7 +17,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -42,15 +43,17 @@ public class AttackDetectionFilter extends OncePerRequestFilter {
     private final ObjectMapper mapper = new ObjectMapper();
 
     private final PathExclusions exclusions;
+    private final ModeService modeService;
 
     public AttackDetectionFilter(SecurityProperties properties, List<AttackDetector> detectors,
                                  IpBlockingService blockingService, AlertLoggerService alertLogger,
-                                 PathExclusions exclusions) {
+                                 PathExclusions exclusions, ModeService modeService) {
         this.properties = properties;
         this.detectors = List.copyOf(detectors);
         this.blockingService = blockingService;
         this.alertLogger = alertLogger;
         this.exclusions = exclusions;
+        this.modeService = modeService;
     }
 
     @Override
@@ -59,9 +62,33 @@ public class AttackDetectionFilter extends OncePerRequestFilter {
     }
 
     /** A value pulled from the request plus where it came from, for the alert payload. */
-    private record Inspected(String location, String value) {
+    private static final class Inspected {
+        private final String location;
+        private final String value;
+        private String normalized;   // computed once, on first use, then shared by every detector
+
+        Inspected(String location, String value) {
+            this.location = location;
+            this.value = value;
+        }
+
+        String value() {
+            return value;
+        }
+
+        String normalized() {
+            if (normalized == null) {
+                normalized = InputNormalizer.normalize(value);
+            }
+            return normalized;
+        }
+
         String describe() {
             return location + "=" + value;
+        }
+
+        boolean isHeaderOrCookie() {
+            return location.startsWith("header:") || location.startsWith("cookie:");
         }
     }
 
@@ -78,23 +105,30 @@ public class AttackDetectionFilter extends OncePerRequestFilter {
 
         long maxBody = properties.getMaxBodySize();
         long declaredLength = request.getContentLengthLong();
-        if (declaredLength > maxBody) {
-            reject(request, response, new Finding(AttackType.OVERSIZED_PAYLOAD,
-                    "Content-Length=" + declaredLength + " (max " + maxBody + ")"));
-            return;
-        }
-
+        Finding oversized = null;
         HttpServletRequest effective = request;
         String body = null;
-        if (shouldBufferBody(request)) {
-            byte[] bytes = readBody(request.getInputStream(), maxBody);
-            if (bytes == null) {
-                reject(request, response, new Finding(AttackType.OVERSIZED_PAYLOAD,
-                        "Body exceeds " + maxBody + " bytes"));
+
+        if (declaredLength > maxBody) {
+            oversized = new Finding(AttackType.OVERSIZED_PAYLOAD,
+                    "Content-Length=" + declaredLength + " (max " + maxBody + ")");
+            if (!report(request, response, oversized)) {
                 return;
             }
-            body = new String(bytes, StandardCharsets.UTF_8);
-            effective = new CachedBodyHttpServletRequest(request, bytes);
+            // Monitor mode: the body is untouched and passes through as it is, unread.
+        } else if (shouldBufferBody(request)) {
+            byte[] bytes = request.getInputStream().readNBytes((int) Math.min(Integer.MAX_VALUE - 8, maxBody + 1));
+            if (bytes.length > maxBody) {
+                oversized = new Finding(AttackType.OVERSIZED_PAYLOAD, "Body exceeds " + maxBody + " bytes");
+                if (!report(request, response, oversized)) {
+                    return;
+                }
+                // Monitor mode: replay the bytes already read, then the rest of the stream.
+                effective = new PrefixedBodyRequest(request, bytes);
+            } else {
+                body = new String(bytes, StandardCharsets.UTF_8);
+                effective = new CachedBodyHttpServletRequest(request, bytes);
+            }
         }
 
         // The size limit above always applies; per-path exclusions only switch off detectors.
@@ -104,8 +138,7 @@ public class AttackDetectionFilter extends OncePerRequestFilter {
                 : detectors.stream().filter(d -> !skipped.contains(d.type())).toList();
 
         Finding finding = active.isEmpty() ? null : inspect(effective, body, active);
-        if (finding != null) {
-            reject(request, response, finding);
+        if (finding != null && !report(request, response, finding)) {
             return;
         }
         chain.doFilter(effective, response);
@@ -152,7 +185,10 @@ public class AttackDetectionFilter extends OncePerRequestFilter {
 
         for (AttackDetector detector : active) {
             for (Inspected input : inputs) {
-                if (detector.detect(input.value())) {
+                if (!detector.appliesToHeaders() && input.isHeaderOrCookie()) {
+                    continue;
+                }
+                if (detector.detect(input.value(), input.normalized())) {
                     return new Finding(detector.type(), input.describe());
                 }
             }
@@ -195,16 +231,28 @@ public class AttackDetectionFilter extends OncePerRequestFilter {
         }
     }
 
-    private void reject(HttpServletRequest request, HttpServletResponse response, Finding finding)
+    /**
+     * Records a finding. In ENFORCE mode it answers 400, counts a violation toward auto-blocking
+     * and returns false (stop the chain). In MONITOR mode it only logs {@code DETECTED}, counts
+     * nothing and returns true (carry on).
+     *
+     * @return true if the request may continue
+     */
+    private boolean report(HttpServletRequest request, HttpServletResponse response, Finding finding)
             throws IOException {
         String ip = SecurityResponses.clientIp(request, properties);
         String endpoint = SecurityResponses.endpoint(request);
         String attack = finding.type().label();
+        if (modeService.isMonitor()) {
+            alertLogger.log(ip, attack, endpoint, finding.payload(), "DETECTED");
+            return true;
+        }
         alertLogger.log(ip, attack, endpoint, finding.payload(), "BLOCKED");
         if (blockingService.recordViolation(ip, attack)) {
             alertLogger.log(ip, attack, endpoint, "IP auto-blocked after repeated violations", "IP_BLOCKED");
         }
         SecurityResponses.write(response, HttpServletResponse.SC_BAD_REQUEST, finding.type().reason());
+        return false;
     }
 
     /**
@@ -216,11 +264,5 @@ public class AttackDetectionFilter extends OncePerRequestFilter {
     private static boolean shouldBufferBody(HttpServletRequest request) {
         String ct = request.getContentType();
         return ct == null || !ct.toLowerCase(Locale.ROOT).startsWith("multipart/");
-    }
-
-    /** Reads at most {@code max} bytes; returns null if the body is larger. */
-    private static byte[] readBody(InputStream in, long max) throws IOException {
-        byte[] data = in.readNBytes((int) Math.min(Integer.MAX_VALUE - 8, max + 1));
-        return data.length > max ? null : data;
     }
 }

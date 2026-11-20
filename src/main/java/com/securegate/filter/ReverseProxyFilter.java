@@ -91,7 +91,7 @@ public class ReverseProxyFilter extends OncePerRequestFilter {
         String lower = path.toLowerCase(Locale.ROOT);
         String admin = properties.getAdmin().getPathPrefix().toLowerCase(Locale.ROOT);
         return lower.equals(admin) || lower.startsWith(admin + "/")
-                || path.equals("/dashboard") || path.equals("/dashboard/") || path.equals("/dashboard/index.html");
+                || path.equals("/dashboard") || path.startsWith("/dashboard/");
     }
 
     @Override
@@ -231,11 +231,19 @@ public class ReverseProxyFilter extends OncePerRequestFilter {
                     || (HOP_BY_HOP.contains(lower) && !lower.equals("content-length"))) {
                 continue;
             }
+            // A header SecureGate already set (e.g. a security header) is replaced by the first
+            // upstream value, so the protected app's own policy wins and nothing is duplicated.
+            boolean replace = response.containsHeader(name);
             for (String value : header.getValue()) {
                 if (lower.equals("location")) {
                     value = rewriteLocation(value);
                 }
-                response.addHeader(name, value);
+                if (replace) {
+                    response.setHeader(name, value);
+                    replace = false;
+                } else {
+                    response.addHeader(name, value);
+                }
             }
         }
     }

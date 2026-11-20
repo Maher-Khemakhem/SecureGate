@@ -8,11 +8,17 @@ import com.securegate.filter.PathExclusions;
 import com.securegate.filter.RateLimitFilter;
 import com.securegate.filter.ReverseProxyFilter;
 import com.securegate.filter.detector.AttackDetector;
+import com.securegate.filter.SecurityHeadersFilter;
+import com.securegate.filter.detector.CommandInjectionDetector;
+import com.securegate.filter.detector.Log4ShellDetector;
+import com.securegate.filter.detector.NoSqlInjectionDetector;
 import com.securegate.filter.detector.PathTraversalDetector;
+import com.securegate.filter.detector.SsrfDetector;
 import com.securegate.filter.detector.SqlInjectionDetector;
 import com.securegate.filter.detector.XssDetector;
 import com.securegate.service.AlertLoggerService;
 import com.securegate.service.IpBlockingService;
+import com.securegate.service.ModeService;
 import com.securegate.service.RateLimiterService;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -84,8 +90,14 @@ public class SecurityFilterConfig {
     @Bean
     @ConditionalOnMissingBean
     public AdminController adminController(IpBlockingService blocking, AlertLoggerService alerts,
-                                           SecurityProperties properties) {
-        return new AdminController(blocking, alerts, properties);
+                                           SecurityProperties properties, ModeService modeService) {
+        return new AdminController(blocking, alerts, properties, modeService);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ModeService modeService(SecurityProperties properties) {
+        return new ModeService(properties);
     }
 
     /** Serves the monitoring UI (static/dashboard/index.html) at /dashboard. */
@@ -116,6 +128,33 @@ public class SecurityFilterConfig {
     }
 
     @Bean
+    public CommandInjectionDetector commandInjectionDetector() {
+        return new CommandInjectionDetector();
+    }
+
+    // Order matters: the first detector to match names the attack in the alert. Log4Shell and NoSQL
+    // run before SSRF because a ${jndi:ldap://...} payload also contains a URL scheme SSRF flags.
+    @Bean
+    public Log4ShellDetector log4ShellDetector() {
+        return new Log4ShellDetector();
+    }
+
+    @Bean
+    public NoSqlInjectionDetector noSqlInjectionDetector() {
+        return new NoSqlInjectionDetector();
+    }
+
+    @Bean
+    public SsrfDetector ssrfDetector() {
+        return new SsrfDetector();
+    }
+
+    @Bean
+    public FilterRegistrationBean<SecurityHeadersFilter> secureGateSecurityHeadersFilter(SecurityProperties properties) {
+        return register(new SecurityHeadersFilter(properties), "secureGateSecurityHeadersFilter", 0);
+    }
+
+    @Bean
     public FilterRegistrationBean<AdminAuthFilter> secureGateAdminAuthFilter(SecurityProperties properties) {
         return register(new AdminAuthFilter(properties), "secureGateAdminAuthFilter", 1);
     }
@@ -138,16 +177,16 @@ public class SecurityFilterConfig {
     @Bean
     public FilterRegistrationBean<RateLimitFilter> secureGateRateLimitFilter(
             SecurityProperties properties, RateLimiterService limiter, IpBlockingService blocking,
-            AlertLoggerService alerts, PathExclusions exclusions) {
-        return register(new RateLimitFilter(properties, limiter, blocking, alerts, exclusions),
+            AlertLoggerService alerts, PathExclusions exclusions, ModeService modeService) {
+        return register(new RateLimitFilter(properties, limiter, blocking, alerts, exclusions, modeService),
                 "secureGateRateLimitFilter", 3);
     }
 
     @Bean
     public FilterRegistrationBean<AttackDetectionFilter> secureGateAttackDetectionFilter(
             SecurityProperties properties, List<AttackDetector> detectors, IpBlockingService blocking,
-            AlertLoggerService alerts, PathExclusions exclusions) {
-        return register(new AttackDetectionFilter(properties, detectors, blocking, alerts, exclusions),
+            AlertLoggerService alerts, PathExclusions exclusions, ModeService modeService) {
+        return register(new AttackDetectionFilter(properties, detectors, blocking, alerts, exclusions, modeService),
                 "secureGateAttackDetectionFilter", 4);
     }
 
